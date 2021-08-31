@@ -38,6 +38,10 @@ static unsigned const BitTimesPerResetTime = 240;
 /* Maximum possible value of BITER/CITER field. */
 static uint16_t const MaxDMAIterationsPerTCD = DMA_TCD_BITER_MASK;
 
+static bool dmaEnabled(const DMAChannel &c) {
+  return DMA_ERQ & (1 << c.channel);
+}
+
 namespace TDWS28XX {
 
 unsigned PixelDriver::instanceCount = 0;
@@ -221,7 +225,7 @@ void PixelDriver::configureFlexIO(bool enable) {
   p->SHIFTBUF[2] = Zeros;
 
   /* Enable DMA trigger on shifter 1 */
-  p->SHIFTSDEN |= 0X00000002;
+  p->SHIFTSDEN |= 0x00000002;
   
   /* Enable the FlexIO */
   p->CTRL = FLEXIO_CTRL_FLEXEN;
@@ -271,12 +275,20 @@ void PixelDriver::configurePll5(bool enable) {
 void PixelDriver::configureDma(bool enable) {
   IMXRT_FLEXIO_t *p = &pFlex->port();
   const FlexIOHandler::FLEXIO_Hardware_t *hw = &pFlex->hardware();
+  dmaChannel.disable();
 
   if (! enable) {
-    dmaChannel.disable();
     dmaChannel.detachInterrupt();
     return;
   }
+
+  /* Set shift buffer 1 to zero first. Not sure why this is needed, but without */
+  /* it, particularly for SINGLE_BUFFER_BLOCKING mode, sporadically an extra */
+  /* pixel bit precedes the correct buffer and messes up the output. It would */
+  /* be nice to understand why...? */
+  dmasPresetZeros.sourceBuffer(&Zeros,4);
+  dmasPresetZeros.destination(p->SHIFTBUFBIS[1]);
+  dmasPresetZeros.replaceSettingsOnCompletion(dmasSetOnes);
 
   /* This TCD signifies the end of the pixel reset period: it sets shifter 0 */
   /* to ones and thus enables the high part of each following pixel bit. */
@@ -318,34 +330,53 @@ void PixelDriver::configureDma(bool enable) {
   tcd->BITER = BitTimesPerResetTime;
   tcd->CITER = BitTimesPerResetTime;
   dmasLoopZeros.destination(p->SHIFTBUF[1]);
-  dmasLoopZeros.replaceSettingsOnCompletion(dmasSetOnes);
 
-  /* Configure FlexIO module to trigger DMA and add an interrupt handler */
-  /* to manage the pixel buffer switches. */
-  dmaChannel.disable();
-  dmaChannel = dmasSetOnes;
+  /* Configure FlexIO module to trigger DMA. */
+  dmaChannel = dmasPresetZeros;
   dmaChannel.triggerAtHardwareEvent(hw->shifters_dma_channel[1]);
-  dmaChannel.attachInterrupt(dmaISRs[flexIOModule]);
-  dmaChannel.enable();
+  
+  if (ip->bm == SINGLE_BUFFER_BLOCKING) {
+    dmasLoopZeros.disableOnCompletion();
+  } else {
+    /* Continuously refreshing the pixels so loop the TCDs. */
+    dmasLoopZeros.replaceSettingsOnCompletion(dmasPresetZeros);
+    if (ip->bm == DOUBLE_BUFFER) {
+      /* Interrupt for pixel buffer switching. */
+      dmaChannel.attachInterrupt(dmaISRs[flexIOModule]);
+    }
+    dmaChannel.enable();
+  }
 }
 
 void PixelDriver::flipBuffers(void) {
   if (! pFlex) return;
   
-  if (activeBuffer != inactiveBuffer) {
-    /* Swap active and inactive frame buffers. */
+  if (ip->bm == SINGLE_BUFFER_BLOCKING) {
+    /* Update pixels when not being DMAed. */
+    while (dmaEnabled(dmaChannel));
+    dmaChannel = dmasPresetZeros;
+    arm_dcache_flush((uint8_t*)activeBuffer, ip->bsz);
+    dmaChannel.enable();
+  }
+  else if (ip->bm == DOUBLE_BUFFER) {
+    /* Update pixels by swapping active and inactive frame buffers. */
     volatile uint32_t *t = activeBuffer;
     activeBuffer = inactiveBuffer;
     inactiveBuffer = t;
     arm_dcache_flush((uint8_t*)activeBuffer, ip->bsz); /* implicit dsb isb */
 
-    /* This sets the ISR on completion flag of TCD 1 and that ISR handles the rest. */
+    /* This sets the ISR on completion flag of the TCD and the ISR handles the rest. */
     /* This is to synchronize the buffer swap with the frame blanking period in order to prevent tearing. */
     dmasSetZeros.TCD->CSR |= DMA_TCD_CSR_INTMAJOR;
-  } else {
-    /* No frame buffer swap. */
+  }
+  else if (ip->bm == SINGLE_BUFFER) {
+    /* Update pixels with risk of artifacts. */
     arm_dcache_flush((uint8_t*)activeBuffer, ip->bsz);
   }
+}
+
+bool PixelDriver::bufferReady() {
+  return ! (ip->bm == SINGLE_BUFFER_BLOCKING && dmaEnabled(dmaChannel));
 }
 
 void PixelDriver::setLed(uint8_t channel, uint16_t ledIndex, const Color &color, volatile uint32_t *buffer) {

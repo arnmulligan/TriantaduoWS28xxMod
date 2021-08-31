@@ -67,7 +67,11 @@ inline Color grbw(uint8_t g, uint8_t r, uint8_t b, uint8_t w) { return { w, b, r
 enum FlexIOModule { FLEXIO1 = 0, FLEXIO2 = 1 }; // unfortunately flex 3 has no DMA support
 enum ChannelType { RGB, GRB, GRBW };
 enum ColorCapability { TRICOLOR, QUADCOLOR }; // adding white requires additional RAM
-enum BufferMode { SINGLE_BUFFER, DOUBLE_BUFFER }; // double buffering requires double the RAM
+enum BufferMode {
+  SINGLE_BUFFER_BLOCKING, // update pixels only upon flushBuffer(); see bufferReady()
+  SINGLE_BUFFER, // update pixels continuously (may cause artifacts)
+  DOUBLE_BUFFER // update pixels continuously but use double buffering
+};
 
 struct FlexPins {
   uint8_t SRCLK; // shift register shift clock
@@ -95,7 +99,7 @@ struct InternalProperties // internal use only
 
 template<uint16_t maximumLedsPerStrip,
   ColorCapability colorCapability = QUADCOLOR,
-  BufferMode bufferMode = SINGLE_BUFFER>
+  BufferMode bufferMode = SINGLE_BUFFER_BLOCKING>
 struct PixelBuffer
 {
   operator const InternalProperties*() const { return &p; }
@@ -120,7 +124,8 @@ class PixelDriver
     FLASHMEM bool begin(FlexIOModule flexIOModule = FLEXIO1, FlexPins flexPins = { 2, 3, 4 }); // returns true on success
     
     void flipBuffers(void); // for double buffer mode
-    void flushBuffer(void) { flipBuffers(); } // for single buffer mode
+    void flushBuffer(void) { flipBuffers(); } // for single buffer modes
+    bool bufferReady(); // returns true if flush has completed and the pixel buffer can safely be modified
     
     void setLed(uint8_t channel, uint16_t ledIndex, const Color &color) {
       setActiveLed(channel, ledIndex, color);
@@ -160,6 +165,7 @@ class PixelDriver
     FlexPins flexPins;
     FlexIOHandler *pFlex;
     DMAChannel dmaChannel;
+    DMASetting dmasPresetZeros;
     DMASetting dmasSetOnes;
     DMASetting dmasDataSegments[4];
     DMASetting dmasSetZeros;
