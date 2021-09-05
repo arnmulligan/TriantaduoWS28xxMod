@@ -90,24 +90,24 @@ struct FlexPins {
 
 struct InternalProperties // internal use only
 {
-  uint16_t leds;
+  uint16_t pxls;
   ColorCapability cc;
   BufferMode bm;
   size_t bsz;
   uint8_t *bptr;
 };
 
-template<uint16_t maximumLedsPerStrip,
+template<uint16_t maximumPixelsPerStrip,
   ColorCapability colorCapability = QUADCOLOR,
   BufferMode bufferMode = SINGLE_BUFFER_BLOCKING>
 struct PixelBuffer
 {
   operator const InternalProperties*() const { return &p; }
-  uint8_t buffer[sizeof(uint32_t) * maximumLedsPerStrip
+  uint8_t buffer[sizeof(uint32_t) * maximumPixelsPerStrip
         * ((colorCapability == QUADCOLOR) ? 32 : 24)
         * ((bufferMode == DOUBLE_BUFFER) ? 2 : 1)];
   const InternalProperties p = {
-    maximumLedsPerStrip,
+    maximumPixelsPerStrip,
     colorCapability,
     bufferMode,
     sizeof(buffer) / ((bufferMode == DOUBLE_BUFFER) ? 2 : 1),
@@ -127,24 +127,24 @@ class PixelDriver
     void flushBuffer(void) { flipBuffers(); } // for single buffer modes
     bool bufferReady(); // returns true if flush has completed and the pixel buffer can safely be modified
     
-    void setLed(uint8_t channel, uint16_t ledIndex, const Color &color) {
-      setActiveLed(channel, ledIndex, color);
+    void setPixel(uint8_t channel, uint16_t pixelIndex, const Color &color) {
+      setActivePixel(channel, pixelIndex, color);
     }
-    void setActiveLed(uint8_t channel, uint16_t ledIndex, const Color &color) {
-      setLed(channel, ledIndex, color, activeBuffer);
+    void setActivePixel(uint8_t channel, uint16_t pixelIndex, const Color &color) {
+      setPixel(channel, pixelIndex, color, activeBuffer);
     }
-    void setInactiveLed(uint8_t channel, uint16_t ledIndex, const Color &color) {
-      setLed(channel, ledIndex, color, inactiveBuffer);
+    void setInactivePixel(uint8_t channel, uint16_t pixelIndex, const Color &color) {
+      setPixel(channel, pixelIndex, color, inactiveBuffer);
     }
     
-    Color getLed(uint8_t channel, uint16_t ledIndex) {
-      return getActiveLed(channel, ledIndex);
+    Color getPixel(uint8_t channel, uint16_t pixelIndex) {
+      return getActivePixel(channel, pixelIndex);
     }
-    Color getActiveLed(uint8_t channel, uint16_t ledIndex) {
-      return getLed(channel, ledIndex, activeBuffer);
+    Color getActivePixel(uint8_t channel, uint16_t pixelIndex) {
+      return getPixel(channel, pixelIndex, activeBuffer);
     }
-    Color getInactiveLed(uint8_t channel, uint16_t ledIndex) {
-      return getLed(channel, ledIndex, inactiveBuffer);
+    Color getInactivePixel(uint8_t channel, uint16_t pixelIndex) {
+      return getPixel(channel, pixelIndex, inactiveBuffer);
     }
 
   private:
@@ -153,8 +153,8 @@ class PixelDriver
     void configureFlexIO(bool enable);
     void configurePll5(bool enable);
     void configureDma(bool enable);
-    void setLed(uint8_t channel, uint16_t ledIndex, const Color &color, volatile uint32_t *buffer);
-    Color getLed(uint8_t channel, uint16_t ledIndex, volatile uint32_t *buffer);
+    void setPixel(uint8_t channel, uint16_t pixelIndex, const Color &color, volatile uint32_t *buffer);
+    Color getPixel(uint8_t channel, uint16_t pixelIndex, volatile uint32_t *buffer);
 
     static unsigned instanceCount;
     static PixelDriver *instances[2];

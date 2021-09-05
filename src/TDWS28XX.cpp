@@ -82,7 +82,7 @@ bool PixelDriver::begin(FlexIOModule flexIOModule_, FlexPins flexPins_) {
   flexPins = flexPins_;
   
   /* Sanity */
-  if (! ip->leds) return false;
+  if (! ip->pxls) return false;
   if (flexIOModule > FLEXIO2) return false;
   if (pFlex) return false;
 
@@ -379,45 +379,45 @@ bool PixelDriver::bufferReady() {
   return ! (ip->bm == SINGLE_BUFFER_BLOCKING && dmaEnabled(dmaChannel));
 }
 
-void PixelDriver::setLed(uint8_t channel, uint16_t ledIndex, const Color &color, volatile uint32_t *buffer) {
-  if (channel > 31 || ledIndex >= ip->leds) return;
+void PixelDriver::setPixel(uint8_t channel, uint16_t pixelIndex, const Color &color, volatile uint32_t *buffer) {
+  if (channel > 31 || pixelIndex >= ip->pxls) return;
 
   const uint32_t channelMask = 1 << channel;
-  uint32_t ledMask, ledValue;
+  uint32_t pxlMask, pxlValue;
   
   if (channelTypes[channel] == GRBW) {
-    buffer += 32u * ledIndex;
-    ledMask = 1 << 31;
-    ledValue = color.raw;
+    buffer += 32u * pixelIndex;
+    pxlMask = 1 << 31;
+    pxlValue = color.raw;
   } else {
-    buffer += 24u * ledIndex;
-    ledMask = 1 << 23;
-    ledValue = color.raw >> 8;
+    buffer += 24u * pixelIndex;
+    pxlMask = 1 << 23;
+    pxlValue = color.raw >> 8;
   }
   
-  while (ledMask) {
-    if (ledValue & ledMask) {
+  while (pxlMask) {
+    if (pxlValue & pxlMask) {
       *buffer |= channelMask;
     } else {
       *buffer &= ~channelMask;
     }
     ++buffer;
-    ledMask >>= 1;
+    pxlMask >>= 1;
   }
 }
 
-Color PixelDriver::getLed(uint8_t channel, uint16_t ledIndex, volatile uint32_t *buffer) {
-  if (channel > 31 || ledIndex >= ip->leds) return Color();
+Color PixelDriver::getPixel(uint8_t channel, uint16_t pixelIndex, volatile uint32_t *buffer) {
+  if (channel > 31 || pixelIndex >= ip->pxls) return Color();
   
   const uint32_t channelMask = 1 << channel;
   unsigned count;
   Color c;
   
   if (channelTypes[channel] == GRBW) {
-    buffer += 32u * ledIndex + 32u;
+    buffer += 32u * pixelIndex + 32u;
     count = 32;
   } else {
-    buffer += 24u * ledIndex + 24u;
+    buffer += 24u * pixelIndex + 24u;
     count = 24;
   }
   
