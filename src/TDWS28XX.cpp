@@ -105,7 +105,7 @@ bool PixelDriver::begin(FlexIOModule flexIOModule_, FlexPins flexPins_) {
   
   /* Set up buffer pointers */
   activeBuffer = reinterpret_cast<uint32_t*>(ip->bptr);
-  inactiveBuffer = (ip->bm == DOUBLE_BUFFER)
+  inactiveBuffer = (ip->bm == DOUBLE_BUFFER || ip->bm == DOUBLE_BUFFER_BLOCKING)
     ? reinterpret_cast<uint32_t*>(ip->bptr + ip->bsz)
     : activeBuffer;
   
@@ -335,7 +335,7 @@ void PixelDriver::configureDma(bool enable) {
   dmaChannel = dmasPresetZeros;
   dmaChannel.triggerAtHardwareEvent(hw->shifters_dma_channel[1]);
   
-  if (ip->bm == SINGLE_BUFFER_BLOCKING) {
+  if (ip->bm == SINGLE_BUFFER_BLOCKING || ip->bm == DOUBLE_BUFFER_BLOCKING) {
     dmasLoopZeros.disableOnCompletion();
   } else {
     /* Continuously refreshing the pixels so loop the TCDs. */
@@ -349,34 +349,54 @@ void PixelDriver::configureDma(bool enable) {
 }
 
 void PixelDriver::flipBuffers(void) {
+  volatile uint32_t *bptr;
   if (! pFlex) return;
   
-  if (ip->bm == SINGLE_BUFFER_BLOCKING) {
-    /* Update pixels when not being DMAed. */
-    while (dmaEnabled(dmaChannel));
-    dmaChannel = dmasPresetZeros;
-    arm_dcache_flush((uint8_t*)activeBuffer, ip->bsz);
-    dmaChannel.enable();
-  }
-  else if (ip->bm == DOUBLE_BUFFER) {
-    /* Update pixels by swapping active and inactive frame buffers. */
-    volatile uint32_t *t = activeBuffer;
-    activeBuffer = inactiveBuffer;
-    inactiveBuffer = t;
-    arm_dcache_flush((uint8_t*)activeBuffer, ip->bsz); /* implicit dsb isb */
+  switch (ip->bm) {
+    case SINGLE_BUFFER_BLOCKING:
+      /* Single refresh of display; modify pixels safely when refresh is complete. */
+      while (dmaEnabled(dmaChannel));
+      dmaChannel = dmasPresetZeros;
+      arm_dcache_flush((uint8_t*)activeBuffer, ip->bsz);
+      dmaChannel.enable();
+      break;
+    
+    case SINGLE_BUFFER:
+      /* Continual refresh of display; modify pixels with risk of artifacts. */
+      arm_dcache_flush((uint8_t*)activeBuffer, ip->bsz);
+      break;
+      
+    case DOUBLE_BUFFER_BLOCKING:
+      /* Single refresh of display; modify pixels safely using inactive buffer. */
+      while (dmaEnabled(dmaChannel));
+      dmaChannel = dmasPresetZeros;
+      bptr = inactiveBuffer;
+      inactiveBuffer = activeBuffer;
+      activeBuffer = bptr;
+      for (unsigned i = 0; i < dmasDataSegmentsCount; ++i) {
+        dmasDataSegments[i].TCD->SADDR = bptr;
+        bptr += MaxDMAIterationsPerTCD;
+      }
+      arm_dcache_flush((uint8_t*)activeBuffer, ip->bsz);
+      dmaChannel.enable();
+      break;
+      
+    case DOUBLE_BUFFER:
+      /* Continual refresh of display; modify pixels safely using inactive buffer. */
+      volatile uint32_t *t = activeBuffer;
+      activeBuffer = inactiveBuffer;
+      inactiveBuffer = t;
+      arm_dcache_flush((uint8_t*)activeBuffer, ip->bsz); /* implicit dsb isb */
 
-    /* This sets the ISR on completion flag of the TCD and the ISR handles the rest. */
-    /* This is to synchronize the buffer swap with the frame blanking period in order to prevent tearing. */
-    dmasSetZeros.TCD->CSR |= DMA_TCD_CSR_INTMAJOR;
-  }
-  else if (ip->bm == SINGLE_BUFFER) {
-    /* Update pixels with risk of artifacts. */
-    arm_dcache_flush((uint8_t*)activeBuffer, ip->bsz);
+      /* This sets the ISR on completion flag of the TCD and the ISR handles the rest. */
+      /* This is to synchronize the buffer swap with the frame blanking period in order to prevent tearing. */
+      dmasSetZeros.TCD->CSR |= DMA_TCD_CSR_INTMAJOR;
+      break;
   }
 }
 
 bool PixelDriver::bufferReady() {
-  return ! (ip->bm == SINGLE_BUFFER_BLOCKING && dmaEnabled(dmaChannel));
+  return ! ((ip->bm == SINGLE_BUFFER_BLOCKING || ip->bm == DOUBLE_BUFFER_BLOCKING) && dmaEnabled(dmaChannel));
 }
 
 void PixelDriver::setPixel(uint8_t channel, uint16_t pixelIndex, const Color &color, volatile uint32_t *buffer) {

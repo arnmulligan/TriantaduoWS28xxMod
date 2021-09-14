@@ -70,6 +70,7 @@ enum ColorCapability { TRICOLOR, QUADCOLOR }; // adding white requires additiona
 enum BufferMode {
   SINGLE_BUFFER_BLOCKING, // update pixels only upon flushBuffer(); see bufferReady()
   SINGLE_BUFFER, // update pixels continuously (may cause artifacts)
+  DOUBLE_BUFFER_BLOCKING, // update pixels only upon flipBuffers(); see bufferReady()
   DOUBLE_BUFFER // update pixels continuously but use double buffering
 };
 
@@ -105,12 +106,12 @@ struct PixelBuffer
   operator const InternalProperties*() const { return &p; }
   uint8_t buffer[sizeof(uint32_t) * maximumPixelsPerStrip
         * ((colorCapability == QUADCOLOR) ? 32 : 24)
-        * ((bufferMode == DOUBLE_BUFFER) ? 2 : 1)];
+        * ((bufferMode == DOUBLE_BUFFER || bufferMode == DOUBLE_BUFFER_BLOCKING) ? 2 : 1)];
   const InternalProperties p = {
     maximumPixelsPerStrip,
     colorCapability,
     bufferMode,
-    sizeof(buffer) / ((bufferMode == DOUBLE_BUFFER) ? 2 : 1),
+    sizeof(buffer) / ((bufferMode == DOUBLE_BUFFER || bufferMode == DOUBLE_BUFFER_BLOCKING) ? 2 : 1),
     buffer
   };
 };
@@ -125,7 +126,11 @@ class PixelDriver
     
     void flipBuffers(void); // for double buffer mode
     void flushBuffer(void) { flipBuffers(); } // for single buffer modes
-    bool bufferReady(); // returns true if flush has completed and the pixel buffer can safely be modified
+    
+    // SINGLE_BUFFER_BLOCKING: returns true if the flush has completed and the pixel buffer
+    //    can safely be modified and the next call to flushBuffer() won't block
+    // DOUBLE_BUFFER_BLOCKING: returns true if the next call to flipBuffers() won't block
+    bool bufferReady();
     
     void setPixel(uint8_t channel, uint16_t pixelIndex, const Color &color) {
       setActivePixel(channel, pixelIndex, color);
