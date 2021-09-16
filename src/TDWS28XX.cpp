@@ -105,7 +105,7 @@ bool PixelDriver::begin(FlexIOModule flexIOModule_, FlexPins flexPins_) {
   
   /* Set up buffer pointers */
   activeBuffer = reinterpret_cast<uint32_t*>(ip->bptr);
-  inactiveBuffer = (ip->bm == DOUBLE_BUFFER || ip->bm == DOUBLE_BUFFER_BLOCKING)
+  inactiveBuffer = (ip->bm == DOUBLE_BUFFER_CONTINUOUS || ip->bm == DOUBLE_BUFFER)
     ? reinterpret_cast<uint32_t*>(ip->bptr + ip->bsz)
     : activeBuffer;
   
@@ -220,8 +220,8 @@ void PixelDriver::configureFlexIO(bool enable) {
   p->TIMCMP[1] = 0x0000001F;
 
   /* Set up the values to be loaded into the shift registers at the beginning of each bit */
-  p->SHIFTBUF[0] = Ones;
-  p->SHIFTBUFBIS[1] = 0xAAAAAAAA;  // Debugging pattern should DMA fail to write SHIFTBUFBIS[1]
+  p->SHIFTBUF[0] = Zeros;
+  p->SHIFTBUFBIS[1] = Zeros;
   p->SHIFTBUF[2] = Zeros;
 
   /* Enable DMA trigger on shifter 1 */
@@ -283,7 +283,7 @@ void PixelDriver::configureDma(bool enable) {
   }
 
   /* Set shift buffer 1 to zero first. Not sure why this is needed, but without */
-  /* it, particularly for SINGLE_BUFFER_BLOCKING mode, sporadically an extra */
+  /* it, particularly for non-continuous refresh modes, sporadically an extra */
   /* pixel bit precedes the correct buffer and messes up the output. It would */
   /* be nice to understand why...? */
   dmasPresetZeros.sourceBuffer(&Zeros,4);
@@ -335,16 +335,14 @@ void PixelDriver::configureDma(bool enable) {
   dmaChannel = dmasPresetZeros;
   dmaChannel.triggerAtHardwareEvent(hw->shifters_dma_channel[1]);
   
-  if (ip->bm == SINGLE_BUFFER_BLOCKING || ip->bm == DOUBLE_BUFFER_BLOCKING) {
-    dmasLoopZeros.disableOnCompletion();
-  } else {
+  if (ip->bm == DOUBLE_BUFFER_CONTINUOUS) {
     /* Continuously refreshing the pixels so loop the TCDs. */
     dmasLoopZeros.replaceSettingsOnCompletion(dmasPresetZeros);
-    if (ip->bm == DOUBLE_BUFFER) {
-      /* Interrupt for pixel buffer switching. */
-      dmaChannel.attachInterrupt(dmaISRs[flexIOModule]);
-    }
+    /* Interrupt for pixel buffer switching. */
+    dmaChannel.attachInterrupt(dmaISRs[flexIOModule]);
     dmaChannel.enable();
+  } else {
+    dmasLoopZeros.disableOnCompletion();
   }
 }
 
@@ -353,20 +351,15 @@ void PixelDriver::flipBuffers(void) {
   if (! pFlex) return;
   
   switch (ip->bm) {
-    case SINGLE_BUFFER_BLOCKING:
+    case SINGLE_BUFFER:
       /* Single refresh of display; modify pixels safely when refresh is complete. */
       while (dmaEnabled(dmaChannel));
       dmaChannel = dmasPresetZeros;
       arm_dcache_flush((uint8_t*)activeBuffer, ip->bsz);
       dmaChannel.enable();
       break;
-    
-    case SINGLE_BUFFER:
-      /* Continual refresh of display; modify pixels with risk of artifacts. */
-      arm_dcache_flush((uint8_t*)activeBuffer, ip->bsz);
-      break;
       
-    case DOUBLE_BUFFER_BLOCKING:
+    case DOUBLE_BUFFER:
       /* Single refresh of display; modify pixels safely using inactive buffer. */
       while (dmaEnabled(dmaChannel));
       dmaChannel = dmasPresetZeros;
@@ -381,7 +374,7 @@ void PixelDriver::flipBuffers(void) {
       dmaChannel.enable();
       break;
       
-    case DOUBLE_BUFFER:
+    case DOUBLE_BUFFER_CONTINUOUS:
       /* Continual refresh of display; modify pixels safely using inactive buffer. */
       volatile uint32_t *t = activeBuffer;
       activeBuffer = inactiveBuffer;
@@ -396,63 +389,7 @@ void PixelDriver::flipBuffers(void) {
 }
 
 bool PixelDriver::bufferReady() {
-  return ! ((ip->bm == SINGLE_BUFFER_BLOCKING || ip->bm == DOUBLE_BUFFER_BLOCKING) && dmaEnabled(dmaChannel));
-}
-
-void PixelDriver::setPixel(uint8_t channel, uint16_t pixelIndex, const Color &color, volatile uint32_t *buffer) {
-  if (channel > 31 || pixelIndex >= ip->pxls) return;
-
-  const uint32_t channelMask = 1 << channel;
-  uint32_t pxlMask, pxlValue;
-  
-  if (channelTypes[channel] == GRBW) {
-    buffer += 32u * pixelIndex;
-    pxlMask = 1 << 31;
-    pxlValue = color.raw;
-  } else {
-    buffer += 24u * pixelIndex;
-    pxlMask = 1 << 23;
-    pxlValue = color.raw >> 8;
-  }
-  
-  while (pxlMask) {
-    if (pxlValue & pxlMask) {
-      *buffer |= channelMask;
-    } else {
-      *buffer &= ~channelMask;
-    }
-    ++buffer;
-    pxlMask >>= 1;
-  }
-}
-
-Color PixelDriver::getPixel(uint8_t channel, uint16_t pixelIndex, volatile uint32_t *buffer) {
-  if (channel > 31 || pixelIndex >= ip->pxls) return Color();
-  
-  const uint32_t channelMask = 1 << channel;
-  unsigned count;
-  Color c;
-  
-  if (channelTypes[channel] == GRBW) {
-    buffer += 32u * pixelIndex + 32u;
-    count = 32;
-  } else {
-    buffer += 24u * pixelIndex + 24u;
-    count = 24;
-  }
-  
-  while (count--) {
-    --buffer;
-    c.raw >>= 1;
-    if (*buffer & channelMask) {
-      c.raw |= 1 << 31;
-    }
-  }
-  
-#pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Wmaybe-uninitialized"
-  return c;
-#pragma GCC diagnostic pop
+  return ! ((ip->bm == SINGLE_BUFFER || ip->bm == DOUBLE_BUFFER) && dmaEnabled(dmaChannel));
 }
 
 void PixelDriver::setChannelType(uint8_t channel, ChannelType type) {

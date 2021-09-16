@@ -52,14 +52,13 @@ const uint8_t BrightnessPercent = 20; // dim the display to the corresponding pe
 
 
 const uint16_t NumberOfRows = NumberOfPixelsPerChannel / NumberOfPixelsPerRow * NumberOfChannels;
-DMAMEM PixelBuffer<NumberOfPixelsPerChannel, TRICOLOR, SINGLE_BUFFER_BLOCKING> pb;
+DMAMEM PixelBuffer<NumberOfPixelsPerChannel, TRICOLOR, SINGLE_BUFFER> pb;
 PixelDriver pd(pb);
 PNG png;
 SdFs sdfs;
 FsFile directory;
 unsigned long lastSlideStartMs;
 bool loadingBuffer;
-uint16_t rowsBuffered;
 extern const uint8_t gamma8[];
 
 struct position {
@@ -140,18 +139,13 @@ void setup() {
 
 void loop() {
   if (loadingBuffer) {
-    // strangely there doesn't seem to be any way to determine when a PNG has
-    // been fully decoded, so the solution here is to just count the rows
+    // note: decode does the whole PNG in one chunk instead of line by line on each invocation; a little disappointing
     int rc = png.decode(nullptr, 0);
-    if (rc != PNG_SUCCESS) {
-      png.close();
-      Serial.println("decoding PNG error");
-      loadingBuffer = false;
-    } else if (++rowsBuffered >= NumberOfRows) {
-      png.close();
-      loadingBuffer = false;
-      pd.flushBuffer();
-    }
+    png.close();
+    loadingBuffer = false;
+    if (rc == PNG_SUCCESS) pd.flushBuffer();
+    else Serial.println("decoding PNG error");
+    
   } else if (millis() - lastSlideStartMs > SlideShowIntervalMs && pd.bufferReady()) {
     FsFile f = directory.openNextFile();
     if (! f) {
@@ -176,7 +170,6 @@ void loop() {
     
     // looks like a valid PNG
     loadingBuffer = true;
-    rowsBuffered = 0;
     lastSlideStartMs = millis();
   }
   SKIP_THIS_FILE: ;
