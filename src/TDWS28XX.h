@@ -150,6 +150,10 @@ class PixelDriver
     Color getInactivePixel(uint8_t channel, uint16_t pixelIndex) {
       return getPixel(channel, pixelIndex, inactiveBuffer);
     }
+    
+    // for advanced buffer manipulation by user application
+    volatile uint8_t* getBufferPtr() { return reinterpret_cast<volatile uint8_t*>(activeBuffer); }
+    size_t getBufferSize() { return ip->bsz; };
 
   private:
     void dmaIsr(void);

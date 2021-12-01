@@ -27,3 +27,5 @@ setInactiveLed	KEYWORD2
 getLed	KEYWORD2
 getActiveLed	KEYWORD2
 getInactiveLed	KEYWORD2
+getBufferPtr	KEYWORD2
+getBufferSize	KEYWORD2
