@@ -152,7 +152,8 @@ class PixelDriver
     }
     
     // for advanced buffer manipulation by user application
-    volatile uint8_t* getBufferPtr() { return reinterpret_cast<volatile uint8_t*>(activeBuffer); }
+    volatile uint8_t* getActiveBufferPtr() { return reinterpret_cast<volatile uint8_t*>(activeBuffer); }
+    volatile uint8_t* getInactiveBufferPtr() { return reinterpret_cast<volatile uint8_t*>(inactiveBuffer); }
     size_t getBufferSize() { return ip->bsz; };
 
   private:
