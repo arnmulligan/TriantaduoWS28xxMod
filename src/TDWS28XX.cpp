@@ -38,6 +38,9 @@ static unsigned const BitTimesPerResetTime = 240;
 /* Maximum possible value of BITER/CITER field. */
 static uint16_t const MaxDMAIterationsPerTCD = DMA_TCD_BITER_MASK;
 
+/* Adjust with scope for optimum value. */
+static unsigned const OutputPinDriveStrength = 4;
+
 static bool dmaEnabled(const DMAChannel &c) {
   return DMA_ERQ & (1 << c.channel);
 }
@@ -146,7 +149,7 @@ void PixelDriver::dmaIsr(void) {
 void PixelDriver::configurePins(bool enable) {
   uint8_t pm = enable ? OUTPUT : INPUT;
   uint32_t pc = enable
-    ? (IOMUXC_PAD_DSE(7) | IOMUXC_PAD_SPEED(3))
+    ? (IOMUXC_PAD_DSE(OutputPinDriveStrength) | IOMUXC_PAD_SPEED(3) | IOMUXC_PAD_SRE)
     : (IOMUXC_PAD_PKE | IOMUXC_PAD_SPEED(2) | IOMUXC_PAD_DSE(6));
 
   /* Basic pin setup */
